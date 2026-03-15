@@ -3,6 +3,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <arpa/inet.h> // inet_pton
 
 int main() {
     // Flush after every std::cout / std::cerr
@@ -53,8 +54,10 @@ int main() {
                                 // (h)ost-(to)-(n)etwork-(s)hort 2053
                                 .sin_port = htons(2053), 
                                 // (h)ost-(to)-(n)etwork-(l)ong
-                                .sin_addr = { htonl(INADDR_ANY) }, // 0.0.0.0
+                                // .sin_addr = { htonl(INADDR_ANY) }, // 0.0.0.0
                             };
+
+    inet_pton(AF_INET, "127.0.01", &serv_addr.sin_addr);
 
     /*
     int bind(int socket, const struct sockaddr *address,
@@ -89,11 +92,34 @@ int main() {
         std::cout << "Received " << bytesRead << " bytes: " << buffer << std::endl;
 
         // Create an empty response
-        char response[1] = { '\0' };
+        // each char variable can only hold 8bit
+        // so for example: id = 1234 = 0x04d2 - 16bit
+        // have to split into two: 0x04, 0xd2 (each 8 bit)
+
+        // each line is 16 bit (2 8bit elements)
+        
+        // src/main.cpp:100:19: error: narrowing conversion of ‘210’ from ‘int’ to ‘char’ [-Wnarrowing]
+        // 100 |             0x04, 0xd2,
+
+        // reason: char[] has sign, so only accept [-127, 127]
+        // use unsigned char[] instead
+        unsigned char response[12] = {
+            // id = 1234 = 0000 0100 1101 0010 = 0x04d2 = 0x04 0xd2
+            0x04, 0xd2,     
+            
+            // flags = 1 0000 0 0 0 0 000 0000 = 1000 0000 0000 0000 = 0x8000 = 0x80 0x00
+            0x80, 0x00, 
+
+            // everything else is zero
+            0x00, 0x00,     // qdcount
+            0x00, 0x00,     // ancount
+            0x00, 0x00,     // nscount
+            0x00, 0x00      // arcount
+        };
 
         // Send response
         // udpSocket.sendto(b"\0", (0.0.0.0, 2053))
-        if (sendto(udpSocket, response, sizeof(response), 0, reinterpret_cast<struct sockaddr*>(&clientAddress), sizeof(clientAddress)) == -1) {
+        if (sendto(udpSocket, response, 13, 0, reinterpret_cast<struct sockaddr*>(&clientAddress), sizeof(clientAddress)) == -1) {
             perror("Failed to send response");
         }
     }
