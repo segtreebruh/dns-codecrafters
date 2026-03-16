@@ -24,9 +24,16 @@ size_t parseHeader(char* response, const char* buffer) {
 
     header.id = reqHeader.id;
     uint16_t qr = 1;
+    // opcode: 14-11st bit 
+    // shift right 11, then 14-11st bit at 4 rightmost bit
+    // 0xF = 1111
+    // & 0xF to clear all garbage bit to the left (15th bit)
+    // while preserving 4 rightmost bit 
     uint16_t opcode = (ntohs(reqHeader.flags) >> 11) & 0xF;
     uint16_t aa = 0;
     uint16_t tc = 0;
+    // rd: 8th bit
+    // & 0x1 to preserve 0th bit
     uint16_t rd = (ntohs(reqHeader.flags) >> 8) & 0x1;
     uint16_t ra = 0;
     uint16_t z = 0;
@@ -149,9 +156,11 @@ int main() {
         size_t headerLen = parseHeader(response, buffer);
         size_t questionLen = parseQuestion(response + headerLen, buffer);
         const char* qRes = response + headerLen;
-        parseAnswer(response + headerLen + questionLen, qRes, questionLen);
+        size_t answerLen = parseAnswer(response + headerLen + questionLen, qRes, questionLen);
 
-        if (sendto(udpSocket, response, 12, 0, reinterpret_cast<struct sockaddr*>(&clientAddress), sizeof(clientAddress)) == -1) {
+        size_t responseLen = headerLen + questionLen + answerLen;
+
+        if (sendto(udpSocket, response, responseLen, 0, reinterpret_cast<struct sockaddr*>(&clientAddress), sizeof(clientAddress)) == -1) {
             perror("Failed to send response");
         }
     }
