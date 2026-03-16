@@ -13,57 +13,72 @@ struct DNSHeader {
     uint16_t nscount; 
     uint16_t arcount;
 
-    DNSHeader() {
-        id = 0;
-        flags = 0;
-        qdcount = 0;
-        nscount = 0;
-        arcount = 0;
-    }
+    DNSHeader(): id(0), flags(0), qdcount(0), ancount(0), nscount(0), arcount(0) {}
 };
 
-struct DNSQuestion {
-    unsigned char* name;
-    uint16_t type;
-    uint16_t dnsclass;
-};
+size_t parseHeader(char* response, const char* buffer) {
+    DNSHeader reqHeader;
+    memcpy(&reqHeader, buffer, sizeof(DNSHeader));
 
-struct DNSAnswer {
-    unsigned char* name;
-    uint16_t type;
-    uint16_t dnsclass;
-    unsigned int ttl;
-    uint16_t length_rdata;
-    int rdata; 
-};
+    DNSHeader header;
 
-void createDnsHeader(char* response, const DNSHeader& reqHeader) {
-    DNSHeader resHeader;
-
-    resHeader.id = ntohs(reqHeader.id);
-    // flags: 16 bit
+    header.id = reqHeader.id;
     uint16_t qr = 1;
-    // opcode: 14-11st bit, copied from reqHeader
-    // shift right by 11, then opcode will be at the last 4 bit
-    // 0xF = 0000 1111
-    // & 0xF clears all garbage bit 
-    uint16_t opcode = ntohs((reqHeader.flags) >> 11) & 0xF;
+    uint16_t opcode = (ntohs(reqHeader.flags) >> 11) & 0xF;
     uint16_t aa = 0;
     uint16_t tc = 0;
-    // rd: 8th bit, copied from reqHeader
-    // 1 bit only, so & 0x1
-    uint16_t rd = ntohs((reqHeader.flags) >> 8) & 0x1;
+    uint16_t rd = (ntohs(reqHeader.flags) >> 8) & 0x1;
     uint16_t ra = 0;
     uint16_t z = 0;
     uint16_t rcode = (opcode == 0) ? 0 : 4;
 
-    resHeader.flags |= (qr << 15) | (opcode << 11) | (aa << 10) | (tc << 9) | (rd << 8) | (ra << 7) | (z << 4) | (rcode);
-    resHeader.qdcount = reqHeader.qdcount;
-    resHeader.ancount = reqHeader.ancount;
-    resHeader.nscount = reqHeader.nscount;
-    resHeader.arcount = reqHeader.arcount;
+    header.flags |= (qr << 15) | (opcode << 11) | (aa << 10) | (tc << 9) | (rd << 8) | (ra << 7) | (z << 4) | (rcode);
+    header.flags = htons(header.flags);
+    header.qdcount = htons(reqHeader.qdcount);
+    header.ancount = htons(reqHeader.ancount);
+    header.nscount = htons(reqHeader.nscount);
+    header.arcount = htons(reqHeader.arcount);
 
-    memcpy(response, &resHeader, sizeof(resHeader));
+    memcpy(response, &header, sizeof(header));
+
+    return sizeof(DNSHeader);
+}
+
+size_t parseQuestion(char* response, const char* buffer) {
+    const char* ptr = buffer;
+
+    while (*ptr != 0x00) ptr++;
+    ptr++; // skip 0x00
+
+    memcpy(response, &buffer, ptr - buffer);
+    response += ptr - buffer;
+
+    uint16_t type = htons(1);
+    uint16_t cls = htons(1);
+
+    memcpy(response, &type, sizeof(type));
+    response += sizeof(type);
+    memcpy(response, &cls, sizeof(cls));
+
+    return ptr - buffer + sizeof(type) + sizeof(cls);
+}
+
+size_t parseAnswer(char* response, const char* qRes, size_t qLen) {
+    memcpy(response, qRes, qLen);
+    response += qLen;
+
+    // htonl since 32bit (int)
+    uint32_t ttl = htonl(60);
+    uint16_t len = htons(4);
+    uint32_t data = htonl(0x08080808); // 8.8.8.8
+
+    memcpy(response, &ttl, sizeof(ttl));
+    response += sizeof(ttl);
+    memcpy(response, &len, sizeof(len));
+    response += sizeof(len);
+    memcpy(response, &data, sizeof(data));
+
+    return qLen + sizeof(ttl) + sizeof(len) + sizeof(data);
 }
 
 
@@ -100,8 +115,6 @@ int main() {
                                 .sin_addr = { htonl(INADDR_ANY) }, // 0.0.0.0
                             };
 
-    // inet_pton(AF_INET, "127.0.01", &serv_addr.sin_addr);
-
     if (bind(udpSocket, reinterpret_cast<struct sockaddr*>(&serv_addr), sizeof(serv_addr)) != 0) {
         std::cerr << "Bind failed: " << strerror(errno) << std::endl;
         return 1;
@@ -109,10 +122,10 @@ int main() {
 
     int bytesRead;
     char buffer[512];
-    char response[512];
     socklen_t clientAddrLen = sizeof(clientAddress);
 
     while (true) {
+        char response[512] = {0};
         bytesRead = recvfrom(udpSocket, buffer, sizeof(buffer), 0, reinterpret_cast<struct sockaddr*>(&clientAddress), &clientAddrLen);
         if (bytesRead == -1) {
             perror("Error receiving data");
@@ -122,10 +135,23 @@ int main() {
         buffer[bytesRead] = '\0';
         std::cout << "Received " << bytesRead << " bytes: " << buffer << std::endl;
 
-        const DNSHeader* reqHeader = reinterpret_cast<DNSHeader*>(buffer);
-        createDnsHeader(response, *reqHeader);
+        std::cerr << "raw bytes: ";
+        for (int i = 0; i < bytesRead; i++) {
+            std::cerr << std::hex << (int)(unsigned char)buffer[i] << " ";
+        }
+        std::cerr << std::endl;
+        
+        // DO NOT DO THIS
+        // DO NOT USE reinterpret_cast FOR DYNAMICALLY ALLOCATED VARIABLES
+        // const DNSQuery* dnsQuery = reinterpret_cast<DNSQuery*>(buffer);
+        // std::cerr << "query" << endl;
 
-        if (sendto(udpSocket, response, 13, 0, reinterpret_cast<struct sockaddr*>(&clientAddress), sizeof(clientAddress)) == -1) {
+        size_t headerLen = parseHeader(response, buffer);
+        size_t questionLen = parseQuestion(response + headerLen, buffer);
+        const char* qRes = response + headerLen;
+        parseAnswer(response + headerLen + questionLen, qRes, questionLen);
+
+        if (sendto(udpSocket, response, 12, 0, reinterpret_cast<struct sockaddr*>(&clientAddress), sizeof(clientAddress)) == -1) {
             perror("Failed to send response");
         }
     }
