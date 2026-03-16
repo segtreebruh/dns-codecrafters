@@ -103,18 +103,32 @@ int main() {
 
         // reason: char[] has sign, so only accept [-127, 127]
         // use unsigned char[] instead
-        unsigned char response[12] = {
+        unsigned char response[] = {
+            /*** Header */
             // id = 1234 = 0000 0100 1101 0010 = 0x04d2 = 0x04 0xd2
             0x04, 0xd2,     
             
             // flags = 1 0000 0 0 0 0 000 0000 = 1000 0000 0000 0000 = 0x8000 = 0x80 0x00
             0x80, 0x00, 
 
-            // everything else is zero
-            0x00, 0x00,     // qdcount
+            0x00, 0x01,     // qdcount updated to 1
             0x00, 0x00,     // ancount
             0x00, 0x00,     // nscount
-            0x00, 0x00      // arcount
+            0x00, 0x00,     // arcount
+
+            /*** Question */
+            // name: \x0ccodecrafters\x02io
+            0x0c, // length of "codecrafters"
+            0x63, // c
+            0x6F, // o
+            0x64, // d 
+            0x65, // e
+            0x63, 0x72, 0x61, 0x66, 0x74, 0x65, 0x72, 0x73, // crafters
+            0x02, // length of "io", 
+            0x69, 0x6F, // io
+            0x00, // '\0'
+            0x00, 0x01, // DNS type A
+            0x00, 0x01  // class type IN (internet)
         };
 
         // Send response
