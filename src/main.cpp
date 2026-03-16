@@ -39,12 +39,11 @@ size_t parseHeader(char* response, const char* buffer) {
     uint16_t z = 0;
     uint16_t rcode = (opcode == 0) ? 0 : 4;
 
-    header.flags |= (qr << 15) | (opcode << 11) | (aa << 10) | (tc << 9) | (rd << 8) | (ra << 7) | (z << 4) | (rcode);
-    header.flags = htons(header.flags);
-    header.qdcount = htons(reqHeader.qdcount);
-    header.ancount = htons(reqHeader.ancount);
-    header.nscount = htons(reqHeader.nscount);
-    header.arcount = htons(reqHeader.arcount);
+    header.flags |= htons((qr << 15) | (opcode << 11) | (aa << 10) | (tc << 9) | (rd << 8) | (ra << 7) | (z << 4) | (rcode));
+    header.qdcount = htons(1);
+    header.ancount = htons(1);
+    header.nscount = htons(0);
+    header.arcount = htons(0);
 
     memcpy(response, &header, sizeof(header));
 
@@ -57,7 +56,9 @@ size_t parseQuestion(char* response, const char* buffer) {
     while (*ptr != 0x00) ptr++;
     ptr++; // skip 0x00
 
-    memcpy(response, &buffer, ptr - buffer);
+    // &buffer is address of buffer i.e. garbage values 
+    // copy directly from buffer instead
+    memcpy(response, buffer, ptr - buffer);
     response += ptr - buffer;
 
     uint16_t type = htons(1);
@@ -154,7 +155,9 @@ int main() {
         // std::cerr << "query" << endl;
 
         size_t headerLen = parseHeader(response, buffer);
-        size_t questionLen = parseQuestion(response + headerLen, buffer);
+
+        // add headerLen to buffer to make buffer starts after DNSHeader
+        size_t questionLen = parseQuestion(response + headerLen, buffer + headerLen);
         const char* qRes = response + headerLen;
         size_t answerLen = parseAnswer(response + headerLen + questionLen, qRes, questionLen);
 
