@@ -4,6 +4,7 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <arpa/inet.h> // inet_pton
+#include <vector>
 
 struct DNSHeader {
     uint16_t id;
@@ -16,10 +17,30 @@ struct DNSHeader {
     DNSHeader(): id(0), flags(0), qdcount(0), ancount(0), nscount(0), arcount(0) {}
 };
 
-size_t parseHeader(char* response, const char* buffer) {
-    DNSHeader reqHeader;
-    memcpy(&reqHeader, buffer, sizeof(DNSHeader));
+struct DNSQuestion {
+    std::vector<uint8_t> qname;
+    uint16_t type;
+    uint16_t cls;
 
+    DNSQuestion(): qname(std::vector<uint8_t>()), type(0), cls(0) {}
+    size_t sz() { return qname.size() + 2 * 2; }
+};
+
+struct DNSAnswer {
+    std::vector<uint8_t> qname;
+    uint16_t type;
+    uint16_t cls;
+    uint32_t ttl;
+    uint16_t len;
+    uint32_t data;
+
+    DNSAnswer(): qname(std::vector<uint8_t>()), type(0), cls(0), ttl(0), len(0), data(0) {}
+    DNSAnswer(DNSQuestion& q): qname(q.qname), type(q.type), cls(q.cls), ttl(0), len(0), data(0) {}
+
+    size_t sz() { return qname.size() + 2 * 3 + 4 * 2; }
+};
+
+DNSHeader parseHeader(DNSHeader& reqHeader) {
     DNSHeader header;
 
     header.id = reqHeader.id;
@@ -45,48 +66,43 @@ size_t parseHeader(char* response, const char* buffer) {
     header.nscount = htons(0);
     header.arcount = htons(0);
 
-    memcpy(response, &header, sizeof(header));
-
-    return sizeof(DNSHeader);
+    return header;
 }
 
-size_t parseQuestion(char* response, const char* buffer) {
+DNSQuestion parseQuestion(char* response, const char* buffer, size_t questionOffset) {
+    // nextQuestionBuffer: buffer after all previous headers + questions
+    DNSQuestion question;
+    
     const char* ptr = buffer;
+    
+    while (true) {
+        // face 11 bit: go back 
+        // 0xc0: 1100 0000 0000 0000
+        if ((*(uint16_t*)ptr & 0xc0) == 0xc0) {
+            uint16_t offset = (*(uint16_t*)ptr & 0x3f);
+            ptr = buffer + offset;
+            continue;
+        }
 
-    while (*ptr != 0x00) ptr++;
-    ptr++; // skip 0x00
+        question.qname.push_back(*ptr);
+        ptr++;
+        if (question.qname.back() == 0x00) break;
+    }
 
-    // &buffer is address of buffer i.e. garbage values 
-    // copy directly from buffer instead
-    memcpy(response, buffer, ptr - buffer);
-    response += ptr - buffer;
+    question.type = htons(1);
+    question.cls = htons(1);
 
-    uint16_t type = htons(1);
-    uint16_t cls = htons(1);
-
-    memcpy(response, &type, sizeof(type));
-    response += sizeof(type);
-    memcpy(response, &cls, sizeof(cls));
-
-    return ptr - buffer + sizeof(type) + sizeof(cls);
+    return question;
 }
 
-size_t parseAnswer(char* response, const char* qRes, size_t qLen) {
-    memcpy(response, qRes, qLen);
-    response += qLen;
+DNSAnswer parseAnswer(char* response, DNSQuestion& question) {
+    DNSAnswer answer(question);
 
-    // htonl since 32bit (int)
-    uint32_t ttl = htonl(60);
-    uint16_t len = htons(4);
-    uint32_t data = htonl(0x08080808); // 8.8.8.8
+    answer.ttl = htons(60);
+    answer.len = htons(4);
+    answer.data = htons(0x08080808); // 8.8.8.8
 
-    memcpy(response, &ttl, sizeof(ttl));
-    response += sizeof(ttl);
-    memcpy(response, &len, sizeof(len));
-    response += sizeof(len);
-    memcpy(response, &data, sizeof(data));
-
-    return qLen + sizeof(ttl) + sizeof(len) + sizeof(data);
+    return answer;
 }
 
 
@@ -154,7 +170,9 @@ int main() {
         // const DNSQuery* dnsQuery = reinterpret_cast<DNSQuery*>(buffer);
         // std::cerr << "query" << endl;
 
-        size_t headerLen = parseHeader(response, buffer);
+        DNSHeader* reqHeader = reinterpret_cast<DNSHeader*>(buffer);
+        DNSHeader header = parseHeader(*reqHeader);
+        DNSQuestion question = parseQuestion(response, buffer);
 
         // add headerLen to buffer to make buffer starts after DNSHeader
         size_t questionLen = parseQuestion(response + headerLen, buffer + headerLen);
