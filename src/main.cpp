@@ -38,7 +38,7 @@ struct DNSAnswer {
     DNSAnswer(): qname(std::vector<uint8_t>()), type(0), cls(0), ttl(0), len(0), data(0) {}
     DNSAnswer(DNSQuestion& q): qname(q.qname), type(q.type), cls(q.cls), ttl(0), len(0), data(0) {}
 
-    size_t sz() { return qname.size() + 2 * 3 + 4 * 2; }
+    size_t sz() { return 2 + 2 * 3 + 4 * 2; }
 };
 
 DNSHeader parseHeader(DNSHeader& reqHeader) {
@@ -134,23 +134,30 @@ size_t createResponse(char* buffer, char* response) {
         answers.push_back(answer);
     }
 
+    // store offsets of each question wrt response at the start of each question
+    std::vector<uint16_t> qOffsets;
     char* ptr = response;
     memcpy(ptr, &header, sizeof(DNSHeader));
     ptr += sizeof(DNSHeader);
 
     for (auto& q: questions) {
-        // uncompressed qname
+        qOffsets.push_back(ptr - response);
         memcpy(ptr, q.qname.data(), q.qname.size()); ptr += q.qname.size();
         memcpy(ptr, &q.type, sizeof(q.type)); ptr += sizeof(q.type);
         memcpy(ptr, &q.cls, sizeof(q.cls)); ptr += sizeof(q.cls);
     }
 
-    for (auto& a: answers) {
-        memcpy(ptr, a.qname.data(), a.qname.size()); ptr += a.qname.size();
+    for (int i = 0; i < answers.size(); i++) {
+        // in compressed answers, name shrink to exactly two bytes 
+        // "encrypt" name field into pointer field starting with 11 and 14 bit for offset
+        uint16_t ptr_field = htons(0xC000 | qOffsets[i]);
+        memcpy(ptr, &ptr_field, sizeof(ptr_field)); ptr += sizeof(ptr_field);
+
+        auto& a = answers[i];
         memcpy(ptr, &a.type, sizeof(a.type)); ptr += sizeof(a.type);
-        memcpy(ptr, &a.cls, sizeof(a.cls)); ptr += sizeof(a.cls);
-        memcpy(ptr, &a.ttl, sizeof(a.ttl)); ptr += sizeof(a.ttl);
-        memcpy(ptr, &a.len, sizeof(a.len)); ptr += sizeof(a.len);
+        memcpy(ptr, &a.cls,  sizeof(a.cls));  ptr += sizeof(a.cls);
+        memcpy(ptr, &a.ttl,  sizeof(a.ttl));  ptr += sizeof(a.ttl);
+        memcpy(ptr, &a.len,  sizeof(a.len));  ptr += sizeof(a.len);
         memcpy(ptr, &a.data, sizeof(a.data)); ptr += sizeof(a.data);
     }
     
